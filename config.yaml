@@ -1,0 +1,23 @@
+telegram:
+  botToken: 8819701172:AAHmV8u-GyKiBjYlxlbJ76JFNvk-rRvStGU
+
+projectsRoot: /Users/nicoplv/Projects
+dataDir: /Users/nicoplv/.pi-telegram-remote-manager
+
+pi:
+  executable: pi
+
+tmux:
+  executable: tmux
+
+sessions:
+  idleTimeoutMinutes: 10
+  bridgeRegistrationTimeoutSeconds: 20
+
+render:
+  tools: brief
+  thinking: brief
+  streamIntervalMs: 1000
+
+bridge:
+  transport: unix-socket
