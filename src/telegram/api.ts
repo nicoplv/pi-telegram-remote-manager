@@ -6,6 +6,7 @@ export interface TelegramMessage { message_id: number; text?: string; from?: Tel
 export interface TelegramCallback { id: string; from: TelegramUser; data?: string; message?: TelegramMessage; }
 export interface TelegramUpdate { update_id: number; message?: TelegramMessage; callback_query?: TelegramCallback; }
 export interface TelegramButton { text: string; callback_data: string; }
+export interface TelegramCommand { command: string; description: string; }
 export interface TelegramSendOptions {
   inlineKeyboard?: TelegramButton[][];
   persistentKeyboard?: string[][];
@@ -50,6 +51,9 @@ export class TelegramApi {
 
   async answerCallback(id: string, text?: string): Promise<void> { await this.call("answerCallbackQuery", { callback_query_id: id, text }); }
   async typing(chatId: number): Promise<void> { await this.call("sendChatAction", { chat_id: chatId, action: "typing" }); }
+  async setCommands(chatId: number, commands: TelegramCommand[]): Promise<void> {
+    await this.call("setMyCommands", { commands, scope: { type: "chat", chat_id: chatId } });
+  }
   async deleteCommands(chatId?: number): Promise<void> {
     const scopes: object[] = [{}, { scope: { type: "all_private_chats" } }];
     if (chatId !== undefined) scopes.push({ scope: { type: "chat", chat_id: chatId } });

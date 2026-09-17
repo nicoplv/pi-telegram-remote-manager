@@ -19,6 +19,7 @@ async function setup(paired = false) {
     editText: vi.fn(async () => undefined),
     answerCallback: vi.fn(async () => undefined),
     typing: vi.fn(async () => undefined),
+    setCommands: vi.fn(async () => undefined),
     deleteCommands: vi.fn(async () => undefined),
     getUpdates: vi.fn(async (_offset: number, signal: AbortSignal) => await new Promise<TelegramUpdate[]>((resolve) => {
       signal.addEventListener("abort", () => resolve([]), { once: true });

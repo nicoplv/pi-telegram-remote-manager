@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { access } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import type { BridgeEvent } from "../bridge/protocol.js";
+import type { BridgeEvent, PiSessionCommand } from "../bridge/protocol.js";
 import type { BridgeServer } from "../bridge/bridge-server.js";
 import type { ProjectManager } from "../projects/project-manager.js";
 import type { StateStore } from "../store.js";
@@ -103,6 +103,22 @@ export class SessionManager extends EventEmitter {
   async recentMessages(id: string): Promise<Array<{ role: string; text: string }>> {
     if (!this.bridge.isConnected(id)) return [];
     return await this.bridge.command(id, "getRecentMessages") as Array<{ role: string; text: string }>;
+  }
+
+  async commands(id: string): Promise<PiSessionCommand[]> {
+    if (!this.bridge.isConnected(id)) return [];
+    const result = await this.bridge.command(id, "getCommands");
+    if (!Array.isArray(result)) return [];
+    return result.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const command = item as Record<string, unknown>;
+      if (typeof command.name !== "string" || !["extension", "prompt", "skill"].includes(String(command.source))) return [];
+      return [{
+        name: command.name,
+        ...(typeof command.description === "string" ? { description: command.description } : {}),
+        source: command.source as PiSessionCommand["source"],
+      }];
+    });
   }
 
   async recover(): Promise<void> {

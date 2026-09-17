@@ -41,14 +41,17 @@ async function setup(initialSessions: ManagedSession[] = []) {
     editText: vi.fn(async (chatId: number, messageId: number, text: string, buttons?: TelegramButton[][]) => { edits.push({ chatId, messageId, text, buttons }); }),
     answerCallback: vi.fn(async () => undefined),
     typing: vi.fn(async () => undefined),
+    setCommands: vi.fn(async () => undefined),
     deleteCommands: vi.fn(async () => undefined),
   };
   const sessionsList = [...initialSessions];
   const sendMessage = vi.fn(async () => undefined);
+  const commands = vi.fn(async () => [] as Array<{ name: string; description?: string; source: "extension" | "prompt" | "skill" }>);
   const sessions = Object.assign(new EventEmitter(), {
     list: () => sessionsList,
     get: (id: string) => sessionsList.find((item) => item.id === id),
     recentMessages: async () => [],
+    commands,
     sendMessage,
     create: vi.fn(async (projectId: string) => {
       const created = session({ id: "created1-3456-7890-abcd-ef1234567890", projectId, friendlyName: "New session", state: "running" });
@@ -85,7 +88,7 @@ async function setup(initialSessions: ManagedSession[] = []) {
   };
   const config = { render: { tools: "brief", thinking: "brief", streamIntervalMs: 1000 } } as AppConfig;
   const bot = new TelegramBot(config, api as never, store, projects as never, sessions as never, extensions as never);
-  return { bot, store, sent, edits, api, projects, sessions, extensions, sendMessage };
+  return { bot, store, sent, edits, api, projects, sessions, extensions, sendMessage, commands };
 }
 
 function message(text: string, updateId = 1): TelegramUpdate {
@@ -175,6 +178,36 @@ describe("TelegramBot menu workflows", () => {
     await context.bot.handleUpdate(callback(`session:leave:${sleeping.id}`, 10));
     expect(context.store.getValue("selected_session")).toBeUndefined();
     expect(context.sessions.stop).toHaveBeenCalledTimes(1);
+    context.store.close();
+  });
+
+  it("publishes selected-session commands and translates Telegram-safe aliases", async () => {
+    const active = session({ state: "running" });
+    const context = await setup([active]);
+    context.commands.mockResolvedValue([
+      { name: "review-changes", description: "Review the current changes", source: "extension" },
+      { name: "skill:web-search", description: "Search the web", source: "skill" },
+      { name: "trm_pair", source: "prompt" },
+      { name: "review_changes", source: "prompt" },
+    ]);
+
+    await context.bot.handleUpdate(callback(`session:view:${active.id}`));
+    expect(context.api.setCommands).toHaveBeenCalledWith(42, [
+      { command: "review_changes", description: "Review the current changes" },
+      { command: "skill_web_search", description: "Search the web" },
+      { command: "pi_trm_pair", description: "Prompt command" },
+      { command: "review_changes_2", description: "Prompt command" },
+    ]);
+
+    await context.bot.handleUpdate(message("/review_changes focus on tests", 3));
+    expect(context.sendMessage).toHaveBeenLastCalledWith(active.id, "/review-changes focus on tests", false);
+    await context.bot.handleUpdate(message("/skill_web_search Telegram", 4));
+    expect(context.sendMessage).toHaveBeenLastCalledWith(active.id, "/skill:web-search Telegram", false);
+    await context.bot.handleUpdate(message("/unknown", 5));
+    expect(context.sendMessage).toHaveBeenLastCalledWith(active.id, "/unknown", false);
+
+    await context.bot.handleUpdate(callback(`session:leave:${active.id}`, 6));
+    expect(context.api.deleteCommands).toHaveBeenCalledWith(42);
     context.store.close();
   });
 

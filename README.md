@@ -46,9 +46,11 @@ After pairing, Telegram displays a persistent `☰ Manager` button and a three-s
 - **Sessions** — list every active or sleeping session as a button, start a session, or manage the selected session.
 - **Manage Pi** — list, install, update, or uninstall Pi packages, and update Pi itself.
 
-The only remote-manager command is `/trm_pair <code>`, used for initial owner pairing. After pairing, Telegram's slash-command suggestions are cleared at the default, private-chat, and owner-chat scopes so manager actions are available only through `☰ Manager`. Retired `/trm_*` commands direct the owner back to that menu and are never sent to Pi.
+The only remote-manager command is `/trm_pair <code>`, used for initial owner pairing. Manager actions are available only through `☰ Manager`; retired `/trm_*` commands direct the owner back to that menu and are never sent to Pi. When no active session is selected, Telegram's slash-command suggestions are empty.
 
-Project and session lists use one inline button per item, with no pagination. Selecting a project or session opens it directly; project names remain case-sensitive, and session buttons include their short ID. New project names, session names, and steering messages are still entered with the Telegram keyboard when prompted. After selecting a session, ordinary text and Pi slash commands are sent to it. While Pi is busy, normal messages are queued as follow-ups; use **Sessions → Current session → Steer** to steer the active turn. The **Leave** action clears the Telegram selection without stopping the Pi/tmux session.
+Project and session lists use one inline button per item, with no pagination. Selecting a project or session opens it directly; project names remain case-sensitive, and session buttons include their short ID. New project names, session names, and steering messages are still entered with the Telegram keyboard when prompted. After selecting an active session, Telegram publishes that live session's invokable extension, prompt-template, and skill commands as slash-command suggestions. Names containing characters unsupported by Telegram use a safe alias—for example, `/skill:web-search` appears as `/skill_web_search` and is translated back before delivery. Telegram allows at most 100 registered commands. Leaving or stopping the selected session clears these suggestions.
+
+Ordinary text and session slash commands are sent to the selected Pi session. While Pi is busy, normal messages are queued as follow-ups; use **Sessions → Current session → Steer** to steer the active turn. The **Leave** action clears the Telegram selection without stopping the Pi/tmux session.
 
 ### Manage Pi
 

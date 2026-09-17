@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { BridgeEvent } from "../bridge/protocol.js";
+import type { BridgeEvent, PiSessionCommand } from "../bridge/protocol.js";
 import { type PiExtensionManager, type PiExtensionTarget, validateSource } from "../extensions/pi-extension-manager.js";
 import type { ProjectManager } from "../projects/project-manager.js";
 import type { SessionManager } from "../sessions/session-manager.js";
 import type { StateStore } from "../store.js";
 import type { AppConfig, ManagedSession } from "../types.js";
 import { log } from "../logger.js";
-import { TelegramApi, TelegramApiError, type TelegramButton, type TelegramCallback, type TelegramMessage, type TelegramUpdate } from "./api.js";
+import { TelegramApi, TelegramApiError, type TelegramButton, type TelegramCallback, type TelegramCommand, type TelegramMessage, type TelegramUpdate } from "./api.js";
 import { escapeHtml, markdownToTelegramHtml, summarize } from "./render.js";
 
 type ExtensionAction = "list" | "install" | "update";
@@ -34,6 +34,9 @@ export class TelegramBot {
   private readonly streams = new Map<string, StreamState>();
   private readonly toolUpdateAt = new Map<string, number>();
   private readonly typingAt = new Map<string, number>();
+  private sessionCommandId?: string;
+  private sessionCommandAliases = new Map<string, string>();
+  private commandMenuRevision = 0;
 
   constructor(
     private readonly config: AppConfig,
@@ -44,6 +47,12 @@ export class TelegramBot {
     private readonly extensions: PiExtensionManager,
   ) {
     sessions.on("bridge_event", (event: BridgeEvent, session: ManagedSession) => void this.onBridgeEvent(event, session));
+    sessions.on("session_changed", (session: ManagedSession | undefined) => {
+      if (session && this.store.getValue<string>("selected_session") === session.id && !["running", "busy"].includes(session.state)) {
+        const owner = this.store.getOwner();
+        if (owner) void this.clearSessionCommands(owner.chatId);
+      }
+    });
   }
 
   start(): void {
@@ -65,6 +74,8 @@ export class TelegramBot {
     try {
       await this.sendManagerKeyboard(owner.chatId, "Manager controls are ready.");
       await this.showMain(owner.chatId);
+      const selected = this.store.getValue<string>("selected_session");
+      if (selected) await this.refreshSessionCommands(owner.chatId, selected);
     } catch (error) {
       log("warn", "Failed to initialize Telegram manager menu", { error: errorText(error) });
     }
@@ -128,7 +139,7 @@ export class TelegramBot {
       return;
     }
     if (this.pending) { await this.consumePending(owner.chatId, text); return; }
-    await this.forward(owner.chatId, text, false);
+    await this.forward(owner.chatId, this.expandSessionCommand(text), false);
   }
 
   private async handlePairing(message: TelegramMessage): Promise<void> {
@@ -269,14 +280,17 @@ export class TelegramBot {
     try {
       if (action === "view") {
         this.store.setValue("selected_session", id);
+        await this.refreshSessionCommands(chatId, id);
         await this.showSession(chatId, id);
       } else if (action === "stop") {
         await this.sessions.stop(id, "manual");
+        if (this.store.getValue<string>("selected_session") === id) await this.clearSessionCommands(chatId);
         await this.api.sendText(chatId, `✅ Stop requested for ${escapeHtml(session.friendlyName)}.`);
         await this.showSessionsMenu(chatId);
       } else if (action === "resume") {
         const resumed = await this.sessions.resume(id);
         this.store.setValue("selected_session", id);
+        await this.refreshSessionCommands(chatId, id);
         await this.showSession(chatId, resumed.id);
       } else if (action === "rename") {
         await this.prompt(chatId, `Type a new name for <b>${escapeHtml(session.friendlyName)}</b>.`, {
@@ -464,7 +478,48 @@ export class TelegramBot {
     this.activeTurns.delete(id);
     this.streams.delete(id);
     this.typingAt.delete(id);
+    await this.clearSessionCommands(chatId);
     await this.api.sendText(chatId, "✅ Left the selected Pi session. The Pi/tmux session is still open.");
+  }
+
+  private async refreshSessionCommands(chatId: number, sessionId: string): Promise<void> {
+    const revision = ++this.commandMenuRevision;
+    const session = this.sessions.get(sessionId);
+    if (!session || !["running", "busy"].includes(session.state)) {
+      await this.clearSessionCommands(chatId, revision);
+      return;
+    }
+    try {
+      const available = await this.sessions.commands(sessionId);
+      if (revision !== this.commandMenuRevision || this.store.getValue<string>("selected_session") !== sessionId) return;
+      const prepared = prepareTelegramCommands(available);
+      this.sessionCommandId = sessionId;
+      this.sessionCommandAliases = prepared.aliases;
+      if (prepared.commands.length) await this.api.setCommands(chatId, prepared.commands);
+      else await this.api.deleteCommands(chatId);
+    } catch (error) {
+      if (revision !== this.commandMenuRevision) return;
+      this.sessionCommandId = undefined;
+      this.sessionCommandAliases.clear();
+      await this.api.deleteCommands(chatId).catch(() => undefined);
+      log("warn", "Failed to load Pi session commands", { sessionId, error: errorText(error) });
+    }
+  }
+
+  private async clearSessionCommands(chatId: number, revision = ++this.commandMenuRevision): Promise<void> {
+    if (revision !== this.commandMenuRevision) return;
+    this.sessionCommandId = undefined;
+    this.sessionCommandAliases.clear();
+    await this.api.deleteCommands(chatId).catch((error) => log("warn", "Failed to clear Pi session commands", { error: errorText(error) }));
+  }
+
+  private expandSessionCommand(text: string): string {
+    const selected = this.store.getValue<string>("selected_session");
+    if (!selected || selected !== this.sessionCommandId) return text;
+    const match = /^\/([a-z0-9_]{1,32})(?:@[A-Za-z0-9_]+)?(?=\s|$)/i.exec(text);
+    if (!match) return text;
+    const original = this.sessionCommandAliases.get(match[1].toLowerCase());
+    return original ? `/${original}${text.slice(match[0].length)}` : text;
   }
 
   private async sendManagerKeyboard(chatId: number, text: string): Promise<void> {
@@ -543,6 +598,7 @@ export class TelegramBot {
     try {
       const session = await this.sessions.create(project);
       this.store.setValue("selected_session", session.id);
+      await this.refreshSessionCommands(chatId, session.id);
       await this.showSession(chatId, session.id);
     } catch (error) {
       await this.api.sendText(chatId, `❌ ${escapeHtml(errorText(error))}`, sessionMenuNavigation());
@@ -594,6 +650,7 @@ export class TelegramBot {
     const owner = this.store.getOwner();
     if (!owner) return;
     const selected = this.store.getValue<string>("selected_session") === session.id;
+    if (selected && ["register", "ready"].includes(event.type)) await this.refreshSessionCommands(owner.chatId, session.id);
     const routed = selected || this.activeTurns.has(session.id);
     if (!routed) return;
     const payload = event.payload ?? {};
@@ -672,6 +729,31 @@ function extensionTargetHtml(target: PiExtensionTarget): string {
 }
 function extensionTargetSuccessText(target: PiExtensionTarget): string {
   return target.scope === "global" ? "globally" : `for project <code>${escapeHtml(target.projectId)}</code>`;
+}
+function prepareTelegramCommands(available: PiSessionCommand[]): { commands: TelegramCommand[]; aliases: Map<string, string> } {
+  const commands: TelegramCommand[] = [];
+  const aliases = new Map<string, string>();
+  const used = new Set<string>();
+  for (const item of available) {
+    if (commands.length >= 100) break;
+    const original = item.name.trim().replace(/^\/+/, "");
+    if (!original || /\s/.test(original)) continue;
+    let base = original.normalize("NFKD").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+    if (!base) base = "pi_command";
+    if (base.startsWith("trm_")) base = `pi_${base}`;
+    base = base.slice(0, 32);
+    let alias = base;
+    for (let suffix = 2; used.has(alias); suffix++) {
+      const ending = `_${suffix}`;
+      alias = `${base.slice(0, 32 - ending.length)}${ending}`;
+    }
+    used.add(alias);
+    aliases.set(alias, original);
+    const fallback = `${item.source[0].toUpperCase()}${item.source.slice(1)} command`;
+    const description = (item.description ?? fallback).replace(/\s+/g, " ").trim().slice(0, 256) || fallback;
+    commands.push({ command: alias, description });
+  }
+  return { commands, aliases };
 }
 function sessionRef(session: ManagedSession): string { return session.id.slice(0, 8); }
 function formatSessionButton(session: ManagedSession): string {

@@ -33,6 +33,17 @@ describe("TelegramApi", () => {
     ]);
   });
 
+  it("registers session commands only for the owner chat", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ ok: true, result: true }), { status: 200, headers: { "content-type": "application/json" } }));
+    const api = new TelegramApi("secret", fetcher as typeof fetch);
+    await api.setCommands(42, [{ command: "review_changes", description: "Review changes" }]);
+    expect(String(fetcher.mock.calls[0][0])).toContain("/setMyCommands");
+    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({
+      commands: [{ command: "review_changes", description: "Review changes" }],
+      scope: { type: "chat", chat_id: 42 },
+    });
+  });
+
   it("does not retry permanent polling errors", async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ ok: false, error_code: 409, description: "Conflict: another getUpdates request" }), { status: 409, headers: { "content-type": "application/json" } }));
     const api = new TelegramApi("secret", fetcher as typeof fetch);

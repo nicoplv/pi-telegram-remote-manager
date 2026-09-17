@@ -12,7 +12,13 @@ export interface BridgeEvent {
   payload?: Record<string, unknown>;
 }
 
-export type BridgeCommandName = "sendUserMessage" | "renameSession" | "getStatus" | "getRecentMessages" | "shutdown";
+export type BridgeCommandName = "sendUserMessage" | "renameSession" | "getStatus" | "getRecentMessages" | "getCommands" | "shutdown";
+
+export interface PiSessionCommand {
+  name: string;
+  description?: string;
+  source: "extension" | "prompt" | "skill";
+}
 
 export interface BridgeCommand {
   v: 1;

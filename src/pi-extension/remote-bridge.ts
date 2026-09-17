@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createConnection, type Socket } from "node:net";
-import { BRIDGE_PROTOCOL_VERSION, encodeFrame, MAX_BRIDGE_FRAME_BYTES, type BridgeCommand, type BridgeEvent, type BridgeResponse } from "../bridge/protocol.js";
+import { BRIDGE_PROTOCOL_VERSION, encodeFrame, MAX_BRIDGE_FRAME_BYTES, type BridgeCommand, type BridgeEvent, type BridgeResponse, type PiSessionCommand } from "../bridge/protocol.js";
 
 function messageParts(content: unknown): { text: string; thinking: string } {
   if (typeof content === "string") return { text: content, thinking: "" };
@@ -88,6 +88,15 @@ export default function remoteBridge(pi: ExtensionAPI): void {
           respond(command.requestId, true, { idle: context.isIdle(), pending: context.hasPendingMessages(), sessionPath: context.sessionManager.getSessionFile(), name: pi.getSessionName() }); break;
         case "getRecentMessages":
           respond(command.requestId, true, recentMessages()); break;
+        case "getCommands": {
+          const commands: PiSessionCommand[] = pi.getCommands().map((item) => ({
+            name: item.name,
+            description: item.description,
+            source: item.source,
+          }));
+          respond(command.requestId, true, commands);
+          break;
+        }
         case "shutdown":
           context.shutdown(); respond(command.requestId, true); break;
       }

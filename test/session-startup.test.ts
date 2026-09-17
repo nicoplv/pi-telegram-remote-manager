@@ -29,4 +29,32 @@ describe("session startup failures", () => {
     expect(stored.lastError).toContain("Pi exited during startup with status 1");
     store.close();
   });
+
+  it("loads and validates slash commands from the live Pi bridge", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tgrm-commands-"));
+    const store = new StateStore(dir);
+    const command = vi.fn(async () => [
+      { name: "review", description: "Review changes", source: "extension" },
+      { name: "skill:search", source: "skill" },
+      { name: 123, source: "extension" },
+      { name: "invalid", source: "unknown" },
+    ]);
+    const bridge = Object.assign(new EventEmitter(), { isConnected: () => true, command, socketPath: "/tmp/bridge.sock" });
+    const sessions = new SessionManager(
+      store,
+      { resolve: async () => "/projects/demo" } as never,
+      {} as never,
+      bridge as never,
+      "pi",
+      "/bridge.js",
+      5_000,
+    );
+
+    await expect(sessions.commands("managed")).resolves.toEqual([
+      { name: "review", description: "Review changes", source: "extension" },
+      { name: "skill:search", source: "skill" },
+    ]);
+    expect(command).toHaveBeenCalledWith("managed", "getCommands");
+    store.close();
+  });
 });
